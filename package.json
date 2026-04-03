@@ -1,0 +1,12 @@
+{
+  "name": "monitor-proposicoes-recife",
+  "version": "1.0.0",
+  "description": "Monitor automático de matérias legislativas da Câmara Municipal do Recife",
+  "main": "monitor.js",
+  "scripts": {
+    "start": "node monitor.js"
+  },
+  "dependencies": {
+    "nodemailer": "^6.9.0"
+  }
+}
