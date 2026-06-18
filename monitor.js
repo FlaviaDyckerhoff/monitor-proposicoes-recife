@@ -155,6 +155,44 @@ function anotarClientesCitados(proposicoes) {
   }
 }
 
+function escapeHtml(valor) {
+  return String(valor ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function escapeRegExp(valor) {
+  return String(valor).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function destacarTermosCliente(texto, clientes) {
+  const nomes = Array.from(new Set([...(clientes || []), ...CLIENTES_NOMES_PROPRIOS]))
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+  if (!nomes.length) return escapeHtml(texto);
+
+  const regex = new RegExp('(^|[^A-Za-zÀ-ÿ0-9])(' + nomes.map(escapeRegExp).join('|') + ')(?=[^A-Za-zÀ-ÿ0-9]|$)', 'gi');
+  return escapeHtml(texto).replace(regex, (match, prefixo, termo) => {
+    return prefixo + '<span style="background:#dbeafe;color:#1e3a8a;font-weight:700;border-radius:3px;padding:1px 3px">' + termo + '</span>';
+  });
+}
+
+function renderizarEmenta(p) {
+  const texto = String(p.ementa || '-');
+  const partes = texto.split(/\s+\|\s+Cliente citado:\s+/i);
+  const ementa = destacarTermosCliente(partes[0], p.clientesCitados);
+  if (partes.length < 2) return ementa;
+
+  const clientes = partes.slice(1).join(' | Cliente citado: ');
+  return ementa + '<div style="margin-top:6px">' +
+    '<span style="display:inline-block;background:#eef6ff;border:1px solid #bfdbfe;color:#1e3a8a;border-radius:999px;padding:3px 8px;font-size:11px;font-weight:700">' +
+    'Cliente citado: ' + destacarTermosCliente(clientes, p.clientesCitados) +
+    '</span></div>';
+}
+
 async function enviarEmail(novas) {
   anotarClientesCitados(novas);
   const transporter = nodemailer.createTransport({
@@ -184,13 +222,13 @@ async function enviarEmail(novas) {
           ${p.numero}/${p.ano}
         </td>
         <td style="padding:8px;border-bottom:1px solid #eee;font-size:12px;white-space:nowrap">
-          ${p.autor}
+          ${escapeHtml(p.autor)}
         </td>
         <td style="padding:8px;border-bottom:1px solid #eee;font-size:12px;white-space:nowrap">
-          ${p.data}
+          ${escapeHtml(p.data)}
         </td>
         <td style="padding:8px;border-bottom:1px solid #eee;font-size:12px">
-          ${p.ementa}
+          ${renderizarEmenta(p)}
         </td>
         <td style="padding:8px;border-bottom:1px solid #eee;font-size:12px;white-space:nowrap">
           ${p.url ? `<a href="${p.url}" style="color:#1a3a5c">Ver →</a>` : ''}
