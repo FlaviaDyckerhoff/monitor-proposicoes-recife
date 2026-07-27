@@ -1,5 +1,4 @@
 const fs = require('fs');
-const nodemailer = require('nodemailer');
 
 const EMAIL_DESTINO = process.env.EMAIL_DESTINO;
 const EMAIL_REMETENTE = process.env.EMAIL_REMETENTE;
@@ -187,8 +186,8 @@ function anotarClientesCitados(proposicoes) {
   for (const p of proposicoes || []) {
     const clientes = clientesCitadosNaProposicao(p);
     p.clientesCitados = clientes;
-    if (clientes.length && p.ementa && !String(p.ementa).includes('Cliente citado:')) {
-      p.ementa = String(p.ementa).trim() + ' | Cliente citado: ' + clientes.join(', ');
+    if (clientes.length && p.ementa && !(String(p.ementa).includes('Cliente citado:') || String(p.ementa).includes('CLIENTE CITADO:'))) {
+      p.ementa = String(p.ementa).trim() + ' | 🆘 CLIENTE CITADO: ' + clientes.join(', ');
     }
   }
 }
@@ -214,23 +213,43 @@ function destacarTermosCliente(texto, clientes) {
 
   const regex = new RegExp('(^|[^A-Za-zÀ-ÿ0-9])(' + nomes.map(escapeRegExp).join('|') + ')(?=[^A-Za-zÀ-ÿ0-9]|$)', 'gi');
   return escapeHtml(texto).replace(regex, (match, prefixo, termo) => {
-    return prefixo + '<span style="background:#dbeafe;color:#1e3a8a;font-weight:700;border-radius:3px;padding:1px 3px">' + termo + '</span>';
+    return prefixo + '<span style="background:#fff1f2;color:#991b1b;font-weight:800;border:1px solid #fecdd3;border-radius:3px;padding:1px 4px">' + termo + '</span>';
   });
 }
 
 function renderizarEmenta(p) {
   const texto = String(p.ementa || '-');
-  const partes = texto.split(/\s+\|\s+Cliente citado:\s+/i);
+  const partes = texto.split(/\s+\|\s+(?:🆘\s*)?CLIENTE CITADO:\s+|\s+\|\s+Cliente citado:\s+/i);
   const ementa = destacarTermosCliente(partes[0], p.clientesCitados);
   if (partes.length < 2) return ementa;
 
-  const clientes = partes.slice(1).join(' | Cliente citado: ');
+  const clientes = partes.slice(1).join(' | 🆘 CLIENTE CITADO: ');
   return ementa + '<div style="margin-top:6px">' +
-    '<span style="display:inline-block;background:#eef6ff;border:1px solid #bfdbfe;color:#1e3a8a;border-radius:999px;padding:3px 8px;font-size:11px;font-weight:700">' +
-    'Cliente citado: ' + destacarTermosCliente(clientes, p.clientesCitados) +
+    '<span style="display:inline-block;background:#fff1f2;border:1px solid #fb7185;color:#991b1b;border-radius:999px;padding:4px 9px;font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:0">' +
+    '🆘 CLIENTE CITADO: ' + destacarTermosCliente(clientes, p.clientesCitados) +
     '</span></div>';
 }
 
+
+function clientesCitadosResumoEmail(novas) {
+  const vistos = new Set();
+  const nomes = [];
+  for (const p of (novas || [])) {
+    for (const nome of (Array.isArray(p && p.clientesCitados) ? p.clientesCitados : [])) {
+      const key = String(nome).toLowerCase();
+      if (!vistos.has(key)) { vistos.add(key); nomes.push(nome); }
+    }
+  }
+  return nomes;
+}
+
+function assuntoEmailClienteCitado(novas, assuntoBase) {
+  const nomes = clientesCitadosResumoEmail(novas);
+  if (!nomes.length) return assuntoBase;
+  const lista = nomes.slice(0, 3).join(', ') + (nomes.length > 3 ? ' +' + (nomes.length - 3) : '');
+  const base = String(assuntoBase || '');
+  return base.startsWith('🆘') ? base : '🆘 Cliente citado: ' + lista + ' | ' + base;
+}
 
 function radar03Numero(p) {
   const numero = String(p?.numero ?? p?.numero_proposicao ?? p?.num ?? '').trim();
@@ -240,18 +259,15 @@ function radar03Numero(p) {
   return numero + '/' + ano;
 }
 
-
 function radar03NumeroPartes(p) {
   const numeroRaw = String(p?.numero ?? p?.numero_proposicao ?? p?.num ?? '').trim();
   const anoRaw = String(p?.ano ?? p?.ano_proposicao ?? '').trim();
   if (!numeroRaw) return null;
-
   const match = numeroRaw.match(/^(\d+)\s*\/\s*(\d{2,4})$/);
   const numero = match ? match[1] : numeroRaw;
   const ano = match ? match[2] : anoRaw;
   const numeroInt = parseInt(numero, 10);
   if (!Number.isFinite(numeroInt)) return null;
-
   return {
     numero,
     numeroInt,
@@ -289,6 +305,8 @@ function radar03TipoControle(tipo) {
     .trim();
   const mapa = {
     'PROJETO DE LEI': 'PL', 'PL': 'PL',
+    'PROJETO DE LEI ORDINARIA': 'PLO', 'PLO': 'PLO',
+    'PROJETO DE LEI DO EXECUTIVO': 'PLE', 'PLE': 'PLE',
     'PROJETO DE LEI COMPLEMENTAR': 'PLC', 'PLC': 'PLC',
     'PROPOSTA DE EMENDA A CONSTITUICAO': 'PEC', 'PEC': 'PEC',
     'PROJETO DE DECRETO LEGISLATIVO': 'PDL', 'PDL': 'PDL',
@@ -332,6 +350,8 @@ function radar03AgruparNovidades(novas) {
       ementa: String(p?.ementa || p?.resumo || p?.titulo || '').trim(),
       link: String(p?.link || p?.url || p?.fonte || p?.projeto_url || '').trim(),
       clienteSugestao: Array.isArray(p?.clientesCitados) ? p.clientesCitados.join(', ') : '',
+      clienteCitado: Array.isArray(p?.clientesCitados) && p.clientesCitados.length > 0,
+      clienteCitadoNomes: Array.isArray(p?.clientesCitados) ? p.clientesCitados.join(', ') : '',
     };
     let atual = porTipo.get(tipo);
     if (!atual) {
@@ -355,7 +375,7 @@ function radar03AgruparNovidades(novas) {
   });
 }
 
-async function sincronizarRadar03(novas) {
+async function sincronizarRadar03(novas, opts = {}) {
   const resumo = radar03AgruparNovidades(novas);
   if (!resumo.length) return;
   try {
@@ -375,7 +395,7 @@ async function sincronizarRadar03(novas) {
     while (casa.week.length < 5) casa.week.push('off');
 
     resumo.forEach(rec => {
-      const detalhes = Array.isArray(rec.itens) && rec.itens.length ? rec.itens : [rec];
+      const detalhes = [rec];
       const existentesTipo = casa.items.filter(i => radar03TipoControle(i?.tipo || '') === rec.tipo);
       const baseAtual = existentesTipo.reduce((max, i) => {
         const n = Number.parseInt(String(i?.base || i?.mon || 0), 10) || 0;
@@ -403,6 +423,8 @@ async function sincronizarRadar03(novas) {
         item.ementa = det.ementa || item.ementa || '';
         item.link = det.link || item.link || '';
         item.clienteSugestao = det.clienteSugestao || item.clienteSugestao || '';
+        item.clienteCitado = Boolean(det.clienteCitado || item.clienteCitado);
+        item.clienteCitadoNomes = det.clienteCitadoNomes || item.clienteCitadoNomes || item.clienteSugestao || '';
         item.radar03Id = det.id || item.radar03Id || '';
         item.listaReal03 = true;
       });
@@ -421,7 +443,7 @@ async function sincronizarRadar03(novas) {
     });
 
     const postResp = await fetch(CONTROLE03_STATE_URL, {
-      method: 'POST', headers: radar03AuthHeaders(), body: JSON.stringify({ data }),
+      method: 'POST', headers: radar03AuthHeaders(), body: JSON.stringify({ data, expected_updated_at: state.updated_at || null }),
     });
     if (!postResp.ok) throw new Error('POST ' + postResp.status);
     console.log('✅ Radar 03 sincronizado: ' + CASA_RADAR03 + ' · ' + resumo.map(item => item.tipo + ' ' + item.numero + '/' + item.ano).join(' | '));
@@ -433,7 +455,7 @@ async function sincronizarRadar03(novas) {
 function radar03ReviewUrl(novas) {
   const params = new URLSearchParams({
     casa: CASA_RADAR03,
-    bloco: radar03BlocoEmail(novas),
+    bloco: radar03AgruparNovidades(novas).map(item => item.tipo + ' ' + item.numero + (item.ano ? '/' + item.ano : '')).join(' | '),
     fonte: radar03PrimeiraFonte(novas),
   });
   return `${RADAR03_URL}?${params.toString()}`;
@@ -463,6 +485,8 @@ function renderRadar03EmailButton(novas) {
 
 
 async function enviarEmail(novas) {
+  anotarClientesCitados(novas);
+  const nodemailer = require('nodemailer');
   anotarClientesCitados(novas);
   const transporter = nodemailer.createTransport({
     service: 'gmail',
@@ -537,7 +561,7 @@ async function enviarEmail(novas) {
   await transporter.sendMail({
     from: `"Monitor Recife" <${EMAIL_REMETENTE}>`,
     to: EMAIL_DESTINO,
-    subject: `🏛️ Recife: ${novas.length} nova(s) matéria(s) — ${new Date().toLocaleDateString('pt-BR')}`,
+    subject: assuntoEmailClienteCitado(novas, `🏛️ Recife: ${novas.length} nova(s) matéria(s) — ${new Date().toLocaleDateString('pt-BR')}`),
     html,
   });
 
@@ -564,8 +588,19 @@ async function enviarEmail(novas) {
   const novas = proposicoes.filter(p => !idsVistos.has(p.id));
   console.log(`🆕 Matérias novas: ${novas.length}`);
 
-  if (novas.length > 0) {
-    await sincronizarRadar03(novas);
+  const forceRadar03 = String(process.env.CONTROLE03_FORCE_LATEST || '').trim() === '1';
+  if (forceRadar03) {
+    await sincronizarRadar03(proposicoes, { onlyLatest: true });
+    console.log('✅ Radar 03 atualizado fora de hora com a lista atual da fonte. Email não enviado.');
+    estado.ultima_execucao = new Date().toISOString();
+    salvarEstado(estado);
+    return;
+  }
+
+  const radar03Set = novas;
+
+  if (radar03Set.length > 0) {
+    await sincronizarRadar03(radar03Set);
     await enviarEmail(novas);
     novas.forEach(p => idsVistos.add(p.id));
     estado.proposicoes_vistas = Array.from(idsVistos);
