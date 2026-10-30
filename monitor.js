@@ -57,8 +57,7 @@ async function buscarPorTipo(tipo, ano) {
   });
 
   if (!response.ok) {
-    console.warn(`⚠️ Erro ao buscar tipo ${tipo.title}: ${response.status}`);
-    return [];
+    throw new Error(`Erro ao buscar tipo ${tipo.title}: HTTP ${response.status}`);
   }
 
   const json = await response.json();
